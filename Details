@@ -1,0 +1,86 @@
+There are some limitations when you create an indexed view. 
+You can’t use EXISTS, NOT EXISTS, OUTER JOIN, COUNT(*), MIN, MAX, subqueries, table hints, TOP and UNION in the definition of your indexed view.  Also, it is not allowed to refer to other views and tables in other databases in the view definition. You can’t use the text, ntext, image and XML, data types in your indexed views. Float data type can be used in the indexed view but can’t be used in the clustered index. If the Indexed view’s definition contains GROUP BY clause, you should add COUNT_BIG(*) to the view definition
+
+Another restriction on creating an indexed view is that there are a few SET options that should have certain values in your database if you manage to create an indexed view in it. For example, the ANSI_NULLS, ANSI_PADDING, ANSI_WARNINGS, ARITHABORT,CONCAT_NULL_YIELDS_NULL, and QUOTED_IDENTIFIER  options should be ON, and the NUMERIC_ROUNDABORT  option should be OFF. Non-deterministic columns can’t be used in the indexed view definition. These are the columns that don’t return the same value each time, like the GETDATE() function.
+
+Benefits of clustered indexes created for an indexed view depends on the SQL Server edition. If you are using SQL Server Enterprise edition, SQL Server Query Optimizer will automatically consider the created clustered index as an option in the execution plan if it is the best index found. Otherwise, it will use a better one. In the other SQL Server editions such as Standard edition, the SQL Server Query Optimizer will access all the underlying source tables and use its indexes. In order to force the SQL Server Query Optimizer to use the index view’s clustered index in the execution plan for the query, you should use the WITH (NOEXPAND) table hint in the FROM clause.
+
+Let’s review a small demo to test and compare the performance of a standard view and an indexed view that will read the employee information required for his manager from the Employee, EmployeeDepartmentHistory, Department, Shift and EmployeePayHistory tables under the HumanResources schema from the SQLSHACKDEMO database.
+
+USE SQLShackDemo 
+GO
+CREATE VIEW EmployeeFullInfo
+AS
+SELECT EMP.[BusinessEntityID]
+      ,EMP.[LoginID]
+      ,EMP.[JobTitle]
+      ,EMP.[BirthDate]
+      ,EMP.[MaritalStatus]
+      ,EMP.[Gender]
+      ,EMP.[HireDate]
+      ,Dep.Name AS Department
+	  ,SH.Name AS ShiftName
+	  ,EMPPayHist.Rate AS EmployeeRate
+  FROM [SQLShackDemo].[HumanResources].[Employee] AS EMP
+  JOIN [SQLShackDemo].[HumanResources].[EmployeeDepartmentHistory] AS EMPDepHist
+  ON EMP.BusinessEntityID =EMPDepHist.BusinessEntityID 
+  JOIN [SQLShackDemo].[HumanResources].[Department] AS Dep
+  ON DEP.DepartmentID =EMPDepHist .DepartmentID 
+  JOIN [SQLShackDemo].[HumanResources].[Shift] SH
+  ON EMPDepHist.ShiftID=SH.ShiftID 
+  JOIN [SQLShackDemo].[HumanResources].[EmployeePayHistory] EMPPayHist
+  ON EMP.BusinessEntityID =EMPPayHist.BusinessEntityID 
+  
+  
+  
+Once the EmployeeFullInfo view is created, the user’s access is limited to see only the view columns and the complex logic that reads from the five tables is encapsulated into one small select statement from the view directly like the below one:
+ SELECT * FROM EmployeeFullInfo  where BusinessEntityID >12 
+ 
+ As we can see from the query’s execution plan generated using the APEXSQL Plan application, no performance benefits are achieved from this view, as the SQL Server Query Optimizer reads the data from the source tables performing Table Scan, ending with the below complex plan.
+ 
+ USE SQLShackDemo 
+GO
+CREATE VIEW [HumanResources].EmployeeFullInfo_Indexed
+WITH SCHEMABINDING AS
+SELECT EMP.[BusinessEntityID]
+      ,EMP.[LoginID]
+      ,EMP.[JobTitle]
+      ,EMP.[BirthDate]
+      ,EMP.[MaritalStatus]
+      ,EMP.[Gender]
+      ,EMP.[HireDate]
+      ,Dep.Name AS Department
+	  ,SH.Name AS ShiftName
+	  ,EMPPayHist.Rate AS EmployeeRate
+  FROM [HumanResources].[Employee] AS EMP
+  JOIN [HumanResources].[EmployeeDepartmentHistory] AS EMPDepHist
+  ON EMP.BusinessEntityID =EMPDepHist.BusinessEntityID 
+  JOIN [HumanResources].[Department] AS Dep
+  ON DEP.DepartmentID =EMPDepHist .DepartmentID 
+  JOIN [HumanResources].[Shift] SH
+  ON EMPDepHist.ShiftID=SH.ShiftID 
+  JOIN [HumanResources].[EmployeePayHistory] EMPPayHist
+  ON EMP.BusinessEntityID =EMPPayHist.BusinessEntityID 
+  GO
+  
+  After creating the view, we will create a Unique Clustered Index on the EmployeeFullInfo_Indexed view covering all its fields:
+  CREATE UNIQUE CLUSTERED INDEX IX_VEMPInfo 
+	ON EmployeeFullInfo_Indexed
+	 ([BusinessEntityID]
+      	,[LoginID]
+      	,[JobTitle]
+      	,[BirthDate]
+     	,[MaritalStatus]
+     	,[Gender]
+    	,[HireDate]
+     	,Department
+     	,ShiftName);
+
+As the SQL Server edition installed on my test machine is standard edition, I need to force the SQL Server Query Optimizer to use the created index in the query plan by adding the WITH (NOEXPAND) table hint to my query as below:
+
+SELECT * FROM EmployeeFullInfo_Indexed WITH (NOEXPAND) WHERE BusinessEntityID >12
+
+As you can see from the execution plan generated using the APEXSQL Plan application, it looks totally different; rather than having the five tables’ scan, the SQL Server Query Optimizer determines that using the view’s clustered index is the optimal way to get the requested data from the view. It is clear that the optimizer reads all the data from the clustered index itself without touching the underlying tables.
+
+
+
